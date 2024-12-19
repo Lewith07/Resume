@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minesweeper</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 0;
+            padding: 0;
+            background-color: #f9f9f9;
+        }
+        h1 {
+            margin: 20px 0;
+        }
+        #minesweeper {
+            display: inline-grid;
+            grid-gap: 2px;
+            background-color: #888;
+            padding: 2px;
+        }
+        .cell {
+            width: 30px;
+            height: 30px;
+            background-color: #ccc;
+            text-align: center;
+            vertical-align: middle;
+            font-size: 18px;
+            line-height: 30px;
+            cursor: pointer;
+        }
+        .cell.revealed {
+            background-color: #eee;
+            cursor: default;
+        }
+        .cell.mine {
+            background-color: red;
+        }
+        .cell.flagged {
+            background-color: yellow;
+        }
+        #timer {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 20px;
+            background-color: #fff;
+            padding: 5px 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        #controls {
+            margin: 20px 0;
+        }
+        #high-scores {
+            margin-top: 20px;
+        }
+        table {
+            margin: 0 auto;
+            border-collapse: collapse;
+            width: 300px;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: center;
+        }
+        th {
+            background-color: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Minesweeper</h1>
+    <div id="timer">Time: 0s</div>
+    <div id="minesweeper"></div>
+    <div id="controls">
+        <button id="start-button">Restart Game</button>
+    </div>
+    <div id="high-scores">
+        <h2>High Scores</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Rank</th>
+                    <th>Time (s)</th>
+                </tr>
+            </thead>
+            <tbody id="scores-body"></tbody>
+        </table>
+    </div>
+    <script>
+        const rows = 10;
+        const cols = 10;
+        const minesCount = 15;
+        let grid = [];
+        let mines = [];
+        let timer = 0;
+        let timerInterval = null;
+        let gameStarted = false;
+        let gameOver = false;
+        let highScores = JSON.parse(localStorage.getItem('minesweeperHighScores')) || [];
+    
+        const minesweeper = document.getElementById('minesweeper');
+        const timerElement = document.getElementById('timer');
+        const startButton = document.getElementById('start-button');
+        const scoresBody = document.getElementById('scores-body');
+    
+        // Initialize the game
+        function init() {
+            minesweeper.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+            minesweeper.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+            grid = [];
+            mines = [];
+            gameStarted = false;
+            gameOver = false;
+            timer = 0;
+            updateTimer();
+            stopTimer();
+            generateGrid();
+            placeMines();
+            renderHighScores();
+        }
+    
+        // Generate the grid
+        function generateGrid() {
+            minesweeper.innerHTML = '';
+            for (let r = 0; r < rows; r++) {
+                let row = [];
+                for (let c = 0; c < cols; c++) {
+                    const cell = document.createElement('div');
+                    cell.classList.add('cell');
+                    cell.dataset.row = r;
+                    cell.dataset.col = c;
+                    cell.addEventListener('click', () => {
+                        if (!gameStarted) {
+                            startGame();
+                        }
+                        revealCell(r, c);
+                    });
+                    cell.addEventListener('contextmenu', (e) => {
+                        e.preventDefault();
+                        toggleFlag(cell);
+                    });
+                    minesweeper.appendChild(cell);
+                    row.push({ element: cell, mine: false, revealed: false, flagged: false });
+                }
+                grid.push(row);
+            }
+        }
+    
+        // Place mines randomly
+        function placeMines() {
+            let placedMines = 0;
+            while (placedMines < minesCount) {
+                const r = Math.floor(Math.random() * rows);
+                const c = Math.floor(Math.random() * cols);
+                if (!grid[r][c].mine) {
+                    grid[r][c].mine = true;
+                    mines.push(grid[r][c]);
+                    placedMines++;
+                }
+            }
+        }
+    
+        // Reveal a cell
+        function revealCell(r, c) {
+            if (gameOver) return;
+            const cell = grid[r][c];
+            if (cell.revealed || cell.flagged) return;
+            cell.revealed = true;
+            cell.element.classList.add('revealed');
+            if (cell.mine) {
+                cell.element.classList.add('mine');
+                alert('Game Over!');
+                stopTimer();
+                startButton.textContent = 'Restart Game';
+                gameOver = true;
+                revealAll();
+                return;
+            }
+            const minesAround = countMinesAround(r, c);
+            if (minesAround > 0) {
+                cell.element.textContent = minesAround;
+            } else {
+                revealAdjacent(r, c);
+            }
+            checkWin();
+        }
+    
+        // Toggle flag on right-click
+        function toggleFlag(cell) {
+            if (gameOver) return;
+            const r = parseInt(cell.dataset.row);
+            const c = parseInt(cell.dataset.col);
+            const gridCell = grid[r][c];
+            if (gridCell.revealed) return;
+            gridCell.flagged = !gridCell.flagged;
+            cell.classList.toggle('flagged', gridCell.flagged);
+        }
+    
+        // Count mines around a cell
+        function countMinesAround(r, c) {
+            let count = 0;
+            for (let dr = -1; dr <= 1; dr++) {
+                for (let dc = -1; dc <= 1; dc++) {
+                    const nr = r + dr;
+                    const nc = c + dc;
+                    if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && grid[nr][nc].mine) {
+                        count++;
+                    }
+                }
+            }
+            return count;
+        }
+    
+        // Reveal adjacent cells
+        function revealAdjacent(r, c) {
+            for (let dr = -1; dr <= 1; dr++) {
+                for (let dc = -1; dc <= 1; dc++) {
+                    const nr = r + dr;
+                    const nc = c + dc;
+                    if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+                        revealCell(nr, nc);
+                    }
+                }
+            }
+        }
+    
+        // Reveal all mines
+        function revealAll() {
+            mines.forEach(cell => {
+                cell.element.classList.add('revealed', 'mine');
+            });
+        }
+    
+        // Start the game
+        function startGame() {
+            gameStarted = true;
+            startTimer();
+        }
+    
+        // Start the timer
+        function startTimer() {
+            stopTimer();
+            timerInterval = setInterval(() => {
+                timer++;
+                updateTimer();
+            }, 1000);
+        }
+    
+        // Stop the timer
+        function stopTimer() {
+            clearInterval(timerInterval);
+        }
+    
+        // Update the timer display
+        function updateTimer() {
+            timerElement.textContent = `Time: ${timer}s`;
+        }
+    
+        // Check if the player has won
+        function checkWin() {
+            let revealedCount = 0;
+            grid.flat().forEach(cell => {
+                if (cell.revealed && !cell.mine) revealedCount++;
+            });
+            if (revealedCount === rows * cols - minesCount) {
+                alert('You Win!');
+                stopTimer();
+                updateHighScores(timer);
+                saveHighScores();
+                gameOver = true;
+            }
+        }
+    
+        // Update the high scores table
+        function updateHighScores(time) {
+            highScores.push(time);
+            highScores.sort((a, b) => a - b);
+            highScores = highScores.slice(0, 5); // Keep only top 5 scores
+            renderHighScores();
+        }
+    
+        // Render the high scores table
+        function renderHighScores() {
+            scoresBody.innerHTML = '';
+            highScores.forEach((time, index) => {
+                const row = document.createElement('tr');
+                row.innerHTML = `<td>${index + 1}</td><td>${time}</td>`;
+                scoresBody.appendChild(row);
+            });
+        }
+    
+        // Save high scores to localStorage
+        function saveHighScores() {
+            localStorage.setItem('minesweeperHighScores', JSON.stringify(highScores));
+        }
+    
+        // Restart the game
+        startButton.addEventListener('click', () => {
+            init();
+            startButton.textContent = 'Restart Game';
+        });
+    
+        init();
+    </script>    
+</body>
+</html>
